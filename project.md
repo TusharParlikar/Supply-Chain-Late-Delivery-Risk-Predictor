@@ -90,5 +90,6 @@ Fill in the actual values after loading. If any number differs, update the resum
 - [x] README: problem, dataset link, leakage notes, results table, run steps
 - [ ] Add a dashboard screenshot to the README
 - [ ] Re-check every number in the "Numbers to match" table against the final run
-- [ ] Push to GitHub and add the link to the resume
+- [x] Push to GitHub: https://github.com/TusharParlikar/Supply-Chain-Late-Delivery-Risk-Predictor
+- [ ] Add the GitHub link to the resume
 - [ ] Optional: deploy the dashboard on Streamlit Community Cloud
