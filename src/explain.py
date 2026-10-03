@@ -7,10 +7,10 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import shap
 
-from features import CATEGORICAL, NUMERIC, ROOT, build, load_raw
+from features import CATEGORICAL, NUMERIC, build
+from paths import MODELS_DIR, REPORTS_DIR
 
-MODEL_PATH = ROOT / "models" / "xgb_pipeline.joblib"
-REPORTS_DIR = ROOT / "reports"
+MODEL_PATH = MODELS_DIR / "xgb_pipeline.joblib"
 
 
 def explainer_for(pipe):
@@ -30,13 +30,13 @@ def explain_rows(pipe, X, explainer=None):
 
 
 def original_feature(name):
-    """Map a one-hot column like 'Shipping Mode_Same Day' back to 'Shipping Mode'."""
+    """Map a one-hot column like 'route_type_FTL' back to 'route_type'."""
     return next((c for c in CATEGORICAL if name.startswith(c + "_")), name)
 
 
 def main():
     pipe = joblib.load(MODEL_PATH)
-    X, _, df = build(load_raw())
+    X, _, legs = build()
     sample = X.sample(5000, random_state=42)
     sv = explain_rows(pipe, sample)
 
@@ -54,15 +54,15 @@ def main():
         .sort_values(ascending=False)
         .round(4)
     )
-    importance.rename("mean_abs_shap").to_csv(REPORTS_DIR / "shap_importance.csv")
+    importance.rename("mean_abs_shap").rename_axis("feature").to_csv(REPORTS_DIR / "shap_importance.csv")
     print(importance.to_string())
 
-    # One example order: the highest-risk order in the sample.
+    # One example leg: the highest-risk leg in the sample.
     proba = pipe.predict_proba(sample)[:, 1]
     i = int(proba.argmax())
-    order_id = df.loc[sample.index[i], "Order Id"]
+    leg = legs.loc[sample.index[i]]
     shap.plots.waterfall(sv[i], max_display=12, show=False)
-    plt.title(f"Order {order_id}: late risk {proba[i]:.2f}")
+    plt.title(f"{leg.source_center} to {leg.destination_center}: late risk {proba[i]:.2f}")
     plt.tight_layout()
     plt.savefig(REPORTS_DIR / "shap_waterfall_example.png", dpi=150)
     plt.close()

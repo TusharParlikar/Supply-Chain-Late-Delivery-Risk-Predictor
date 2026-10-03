@@ -1,85 +1,123 @@
-"""Load the DataCo CSV and build the leakage-safe feature table."""
+"""Load the Delhivery data, roll it up to trip legs and build the leakage-safe feature table."""
+import shutil
 from pathlib import Path
 
 import pandas as pd
 
-ROOT = Path(__file__).resolve().parents[1]
-RAW_CSV = ROOT / "data" / "raw" / "DataCoSupplyChainDataset.csv"
-KAGGLE_DATASET = "shashwatwork/dataco-smart-supply-chain-for-big-data-analysis"
+from geo import PinLocator, build_centers, haversine_km, load_pincodes
+from paths import RAW_DIR
 
-TARGET = "Late_delivery_risk"
+RAW_CSV = RAW_DIR / "delhivery_data.csv"
+KAGGLE_DATASET = "santanukundu/delhivery-dataset"
 
-# Known only after the order ships, or a direct restatement of the target.
+# A leg is late when it takes more than this many times the OSRM route-planner estimate.
+LATE_FACTOR = 2.5
+TARGET = "late"
+LEG_KEY = ["trip_uuid", "source_center", "destination_center"]
+
+# Known only after the leg finishes, or computed from the outcome.
 LEAKAGE = [
-    "Days for shipping (real)",
-    "Delivery Status",
-    "Order Status",
-    "shipping date (DateOrders)",
+    "actual_time",
+    "od_end_time",
+    "start_scan_to_end_scan",
+    "actual_distance_to_destination",
+    "factor",
+    "segment_actual_time",
+    "segment_osrm_time",
+    "segment_osrm_distance",
+    "segment_factor",
+    "is_cutoff",
+    "cutoff_factor",
+    "cutoff_timestamp",
 ]
 
-# Everything here is known when the order is placed.
+# Everything here is known when the leg is dispatched.
 CATEGORICAL = [
-    "Shipping Mode",
-    "Market",
-    "Order Region",
-    "Category Name",
-    "Department Name",
-    "Customer Segment",
-    "Type",
+    "route_type",
+    "source_state",
+    "destination_state",
+    "source_type",
+    "destination_type",
+    "source_center",
+    "destination_center",
 ]
 NUMERIC = [
-    "Days for shipment (scheduled)",
-    "Order Item Quantity",
-    "Order Item Discount Rate",
-    "Product Price",
-    "Sales",
-    "Latitude",
-    "Longitude",
-    "order_month",
-    "order_dayofweek",
-    "order_hour",
+    "osrm_time",
+    "osrm_distance",
+    "center_distance_km",
+    "same_state",
+    "start_hour",
+    "start_dayofweek",
 ]
 FEATURES = CATEGORICAL + NUMERIC
 
 
 def download():
-    """Fetch the CSV from Kaggle into data/raw/ if it is not there yet."""
-    if RAW_CSV.exists():
-        return RAW_CSV
-    import shutil
+    if not RAW_CSV.exists():
+        import kagglehub
 
-    import kagglehub
-
-    src = Path(kagglehub.dataset_download(KAGGLE_DATASET)) / RAW_CSV.name
-    RAW_CSV.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy(src, RAW_CSV)
+        RAW_CSV.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(Path(kagglehub.dataset_download(KAGGLE_DATASET)) / RAW_CSV.name, RAW_CSV)
     return RAW_CSV
 
 
 def load_raw():
-    return pd.read_csv(download(), encoding="latin-1")
+    return pd.read_csv(download(), parse_dates=["trip_creation_time", "od_start_time", "od_end_time"])
 
 
-def build(df):
-    """Return (X, y, df_with_order_date_parts). X holds only order-time columns."""
-    df = df.copy()
-    order_date = pd.to_datetime(df["order date (DateOrders)"], format="%m/%d/%Y %H:%M")
-    df["order_date"] = order_date
-    df["order_month"] = order_date.dt.month
-    df["order_dayofweek"] = order_date.dt.dayofweek
-    df["order_hour"] = order_date.dt.hour
+def load_centers(raw=None):
+    return build_centers(load_raw() if raw is None else raw, PinLocator(load_pincodes()))
 
-    X = df[FEATURES]
+
+def to_legs(raw):
+    """One row per trip leg. Time and distance columns are cumulative within a leg, so take the max."""
+    legs = raw.groupby(LEG_KEY, as_index=False).agg(
+        split=("data", "first"),
+        route_type=("route_type", "first"),
+        od_start_time=("od_start_time", "first"),
+        osrm_time=("osrm_time", "max"),
+        osrm_distance=("osrm_distance", "max"),
+        actual_time=("actual_time", "max"),
+    )
+    legs[TARGET] = (legs["actual_time"] > LATE_FACTOR * legs["osrm_time"]).astype(int)
+    return legs
+
+
+def add_features(rows, centers):
+    """Add center, distance and time features. rows needs source_center, destination_center, od_start_time."""
+    rows = rows.copy()
+    for side in ("source", "destination"):
+        info = centers.reindex(rows[f"{side}_center"])
+        rows[f"{side}_state"] = info["state"].fillna("Unknown").values
+        rows[f"{side}_type"] = info["ctype"].fillna("Other").values
+        rows[f"{side}_lat"] = info["latitude"].values
+        rows[f"{side}_lon"] = info["longitude"].values
+    rows["center_distance_km"] = haversine_km(rows["source_lat"], rows["source_lon"],
+                                              rows["destination_lat"], rows["destination_lon"])
+    rows["same_state"] = (rows["source_state"] == rows["destination_state"]).astype(int)
+    rows["start_hour"] = rows["od_start_time"].dt.hour
+    rows["start_dayofweek"] = rows["od_start_time"].dt.dayofweek
+    return rows
+
+
+def build(raw=None):
+    """Return (X, y, legs). X holds only dispatch-time columns."""
+    raw = load_raw() if raw is None else raw
+    legs = add_features(to_legs(raw), load_centers(raw))
+    X = legs[FEATURES]
     assert not set(LEAKAGE) & set(X.columns), "leakage column in features"
     assert TARGET not in X.columns
-    return X, df[TARGET], df
+    return X, legs[TARGET], legs
 
 
 if __name__ == "__main__":
-    df = load_raw()
-    X, y, _ = build(df)
-    print("rows, cols:", df.shape)
-    print("late rate:", round(y.mean(), 4), "| late:", int(y.sum()), "| not late:", int((1 - y).sum()))
-    for col in ["Market", "Order Region", "Shipping Mode", "Category Name"]:
-        print(f"{col}: {df[col].nunique()} unique")
-    print("feature matrix:", X.shape)
+    raw = load_raw()
+    X, y, legs = build(raw)
+    centers = load_centers(raw)
+    print("rows, cols:", raw.shape)
+    print("trips:", raw["trip_uuid"].nunique(), "| legs:", len(legs), "| centers:", len(centers))
+    print("late rate:", round(y.mean(), 4), "| late:", int(y.sum()), "| on time:", int((1 - y).sum()))
+    print("legs by split:", legs["split"].value_counts().to_dict())
+    print("states:", centers["state"].nunique(), "| route types:", legs["route_type"].unique().tolist())
+    print("centers with exact pincode match:", round(centers["pincode"].isin(load_pincodes()["pin"]).mean(), 3))
+    print("feature matrix:", X.shape, "| missing distance:", int(X["center_distance_km"].isna().sum()))

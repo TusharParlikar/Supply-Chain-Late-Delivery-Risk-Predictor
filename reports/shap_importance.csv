@@ -1,18 +1,14 @@
-,mean_abs_shap
-Shipping Mode,1.4173
-Type,0.427
-order_hour,0.1566
-Days for shipment (scheduled),0.1087
-Order Region,0.0607
-Latitude,0.0423
-Longitude,0.0275
-Market,0.013
-order_month,0.0128
-order_dayofweek,0.0107
-Customer Segment,0.0104
-Category Name,0.009
-Order Item Discount Rate,0.0084
-Product Price,0.006
-Sales,0.0053
-Department Name,0.0033
-Order Item Quantity,0.0015
+feature,mean_abs_shap
+osrm_time,0.7075
+destination_state,0.4647
+source_state,0.4446
+destination_type,0.3304
+start_hour,0.3252
+destination_center,0.3003
+osrm_distance,0.284
+source_type,0.257
+route_type,0.2266
+source_center,0.2109
+center_distance_km,0.1112
+start_dayofweek,0.0776
+same_state,0.0164
