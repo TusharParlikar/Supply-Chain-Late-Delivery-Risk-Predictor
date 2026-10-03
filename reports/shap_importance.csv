@@ -1,0 +1,18 @@
+,mean_abs_shap
+Shipping Mode,1.4173
+Type,0.427
+order_hour,0.1566
+Days for shipment (scheduled),0.1087
+Order Region,0.0607
+Latitude,0.0423
+Longitude,0.0275
+Market,0.013
+order_month,0.0128
+order_dayofweek,0.0107
+Customer Segment,0.0104
+Category Name,0.009
+Order Item Discount Rate,0.0084
+Product Price,0.006
+Sales,0.0053
+Department Name,0.0033
+Order Item Quantity,0.0015
